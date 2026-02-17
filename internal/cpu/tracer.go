@@ -12,10 +12,10 @@ type Tracer struct {
 }
 
 type TraceEntry struct {
-	a, f, b, c, d, e, h, l byte
-	sp, pc                 uint16
-	op                     uint16
-	opName                 string
+	a, x, y, s, p byte
+	pc            uint16
+	op            byte
+	opName        string
 }
 
 func NewTracer(c *CPU) *Tracer {
@@ -26,26 +26,16 @@ func NewTracer(c *CPU) *Tracer {
 
 // The Record Saves the current CPU Registers state in a ring buffer.
 func (t *Tracer) Record(c *CPU) {
-	op := uint16(c.read(c.pc))
+	op := c.read(c.pc)
 	var opName string
-	if op == 0xCB {
-		nextOp := c.read(c.pc + 1)
-		opName = CBTable[nextOp].Name
-		op = 0xCB00 | uint16(nextOp)
-	} else {
-		opName = OpTable[op].Name
-	}
+	opName = opTable[op].Name
 	t.buf[t.index] = TraceEntry{
 		pc:     c.pc,
 		a:      c.a,
-		f:      c.f,
-		b:      c.b,
-		c:      c.c,
-		d:      c.d,
-		e:      c.e,
-		h:      c.h,
-		l:      c.l,
-		sp:     c.sp,
+		x:      c.x,
+		y:      c.y,
+		s:      c.s,
+		p:      c.p,
 		op:     op,
 		opName: opName,
 	}
@@ -60,19 +50,18 @@ func (t *Tracer) Dump() {
 		fmt.Printf(
 			"PC:%04X "+
 				"A:%02X "+
-				"F:%02X "+
-				"BC:%02X%02X "+
-				"DE:%02X%02X "+
-				"HL:%02X%02X "+
-				"SP:%04X "+
-				"Op:%04X "+
+				"X:%02X "+
+				"Y:%02X "+
+				"S:%02X "+
+				"P:%02X "+
+				"Op:%02X "+
 				"Fn:%s\n",
 			buf.pc,
-			buf.a, buf.f,
-			buf.b, buf.c,
-			buf.d, buf.e,
-			buf.h, buf.l,
-			buf.sp,
+			buf.a,
+			buf.x,
+			buf.y,
+			buf.s,
+			buf.p,
 			buf.op,
 			buf.opName,
 		)
@@ -90,13 +79,13 @@ func (t *Tracer) GetCPUInfo() []string {
 	buf := t.buf[idx]
 	var str []string
 	str = append(str, fmt.Sprintf("PC:%04X", buf.pc))
-	str = append(str, fmt.Sprintf("AF:%02X%02X", buf.a, buf.f))
-	str = append(str, fmt.Sprintf("BC:%02X%02X", buf.b, buf.c))
-	str = append(str, fmt.Sprintf("DE:%02X%02X", buf.d, buf.e))
-	str = append(str, fmt.Sprintf("HL:%02X%02X", buf.h, buf.l))
-	str = append(str, fmt.Sprintf("SP:%04X", buf.sp))
+	str = append(str, fmt.Sprintf(" A:%02X", buf.a))
+	str = append(str, fmt.Sprintf(" X:%02X", buf.x))
+	str = append(str, fmt.Sprintf(" Y:%02X", buf.y))
+	str = append(str, fmt.Sprintf(" S:%02X", buf.s))
+	str = append(str, fmt.Sprintf(" P:%02X", buf.p))
 	str = append(str, "")
-	str = append(str, fmt.Sprintf("Op:%04X", buf.op))
+	str = append(str, fmt.Sprintf("Op:%02X", buf.op))
 	str = append(str, fmt.Sprintf("Fn:%s", buf.opName))
 	return str
 }

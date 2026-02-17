@@ -1,4 +1,4 @@
-module github.com/yuki-t-carnival/nesutaro
+module nesutaro
 
 go 1.25.0
 

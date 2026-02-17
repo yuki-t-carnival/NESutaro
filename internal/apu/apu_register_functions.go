@@ -1,5 +1,6 @@
 package apu
 
+/*
 // =================================== Global control registers ====================================
 
 func (a *APU) GetNR52() byte {
@@ -193,3 +194,4 @@ func (a *APU) SetNR44(val byte) {
 	}
 	a.nr44 = val
 }
+*/

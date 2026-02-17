@@ -1,7 +1,18 @@
 package cpu
 
 import (
-	"gomeboy/internal/bus"
+	"nesutaro/internal/cpu/bus"
+)
+
+const (
+	// Status Register(p)
+	CarryFlagMask            byte = 1 << 0
+	ZeroFlagMask             byte = 1 << 1
+	InterruptDisableFlagMask byte = 1 << 2
+	DecimalFlagMask          byte = 1 << 3
+	TheBFlagMask             byte = 1 << 4
+	OverflowFlagMask         byte = 1 << 6
+	NegativeFlagMask         byte = 1 << 7
 )
 
 type CPU struct {
@@ -9,171 +20,64 @@ type CPU struct {
 	Bus    *bus.Bus
 
 	// Registers
-	a, f, b, c, d, e, h, l byte
-	sp, pc                 uint16
+	a, x, y, s, p byte
+	pc            uint16
 
 	// Others
-	IsPanic      bool
-	IsStopped    bool
-	isHalted     bool
-	isIMEEnabled bool
-	imeDelay     int
-	cycles       int
-	isHaltBug    bool
-	prevIF       byte
+	cycles  int
+	IsPanic bool
+
+	isIFlagToggleDelayed bool
+
+	testcnt int
 }
 
 func NewCPU(b *bus.Bus) *CPU {
 	c := &CPU{
 		Bus: b,
-		pc:  0x100,
-		sp:  0xFFFE,
-		a:   0x11,
-		f:   0xB0,
-		b:   0x00,
-		c:   0x13,
-		d:   0x00,
-		e:   0xD8,
-		h:   0x01,
-		l:   0x4D,
+		s:   0xFD,
+		p:   0x24,
 	}
+	lo := uint16(c.read(0xFFFC))
+	hi := uint16(c.read(0xFFFD))
+	c.pc = hi<<8 | lo
 	return c
 }
 
 func (c *CPU) Step() int {
 	c.cycles = 0
 
-	c.checkIRQ()
-
-	if c.Bus.IsDMATransferInProgress {
-		c.Bus.DMATransfer()
-		return 4
+	//prevPC := c.pc
+	if c.Bus.HasIRQ && c.p&InterruptDisableFlagMask == 0 {
+		c.irq()
 	}
+	if c.Bus.PPU.HasNMI() {
+		c.nmi()
+	}
+	if c.isIFlagToggleDelayed {
+		c.p |= InterruptDisableFlagMask
+		c.isIFlagToggleDelayed = false
+	}
+	op := c.fetch()
 
-	// ***** STOP is not implemented *****
-	// Stop mode ends when any input is received
-	/* if c.IsStopped {
-		if c.Bus.Joypad.HasStateChanged {
-			c.IsStopped = false
-		} else {
-			return 4 // When set to 0, g.Update() does not finish
+	/* if c.testcnt < 100 {
+		opStr := fmt.Sprintf("%02X", op)
+		for i := 0; i < opTable[op].Bytes-1; i++ {
+			opStr += fmt.Sprintf(" %02X", c.read(c.pc+uint16(i)))
 		}
+		var name string
+		if opTable[op].Name[0] == '*' {
+			name = opTable[op].Name
+		} else {
+			name = " " + opTable[op].Name
+		}
+		fmt.Printf("%5d: %04X  %-8s %-20s", c.testcnt+1, prevPC, opStr, name)
+		fmt.Printf("A:%02X X:%02X Y:%02X P:%02X SP:%02X\n", c.a, c.x, c.y, c.p, c.s)
+		c.testcnt++
 	} */
-
-	if c.isHalted {
-		if (c.read(bus.IF) & 0x1F) != 0 {
-			c.isHalted = false
-		} else {
-			c.cycles += 4
-			return c.cycles
-		}
-	}
-
-	if c.handleInterrupt() {
-		return c.cycles
-	}
-
-	op := c.fetchOpcode()
-	OpTable[op].fn(c)
-
-	// For EI instruction.
-	if c.imeDelay > 0 {
-		c.imeDelay--
-		if c.imeDelay == 0 {
-			c.isIMEEnabled = true
-		}
-	}
+	opTable[op].fn(c)
 
 	return c.cycles
-}
-
-func (c *CPU) GetBC() uint16 {
-	return (uint16(c.b) << 8) | uint16(c.c)
-}
-func (c *CPU) SetBC(val uint16) {
-	c.b = byte(val >> 8)
-	c.c = byte(val & 0x00FF)
-}
-func (c *CPU) GetDE() uint16 {
-	return (uint16(c.d) << 8) | uint16(c.e)
-}
-func (c *CPU) SetDE(val uint16) {
-	c.d = byte(val >> 8)
-	c.e = byte(val & 0x00FF)
-}
-func (c *CPU) GetHL() uint16 {
-	return (uint16(c.h) << 8) | uint16(c.l)
-}
-func (c *CPU) SetHL(val uint16) {
-	c.h = byte(val >> 8)
-	c.l = byte(val & 0x00FF)
-}
-func (c *CPU) GetAF() uint16 {
-	return (uint16(c.a) << 8) | uint16(c.f&0xF0)
-}
-func (c *CPU) SetAF(val uint16) {
-	c.a = byte(val >> 8)
-	c.f = byte(val & 0x00F0)
-}
-
-func (c *CPU) GetFlagZ() bool {
-	return (c.f & 0x80) == 0x80
-}
-
-func (c *CPU) SetFlagZ(b bool) {
-	if b {
-		c.f |= 0x80
-	} else {
-		c.f &= (^byte(0x80))
-	}
-}
-
-func (c *CPU) GetFlagN() bool {
-	return (c.f & 0x40) == 0x40
-}
-
-func (c *CPU) SetFlagN(b bool) {
-	if b {
-		c.f |= 0x40
-	} else {
-		c.f &= (^byte(0x40))
-	}
-}
-
-func (c *CPU) GetFlagH() bool {
-	return (c.f & 0x20) == 0x20
-}
-
-func (c *CPU) SetFlagH(b bool) {
-	if b {
-		c.f |= 0x20
-	} else {
-		c.f &= (^byte(0x20))
-	}
-}
-
-func (c *CPU) GetFlagC() bool {
-	return (c.f & 0x10) == 0x10
-}
-
-func (c *CPU) SetFlagC(b bool) {
-	if b {
-		c.f |= 0x10
-	} else {
-		c.f &= (^byte(0x10))
-	}
-}
-
-func (c *CPU) fetchOpcode() byte {
-	op := c.read(c.pc)
-	c.pc++
-	return op
-	// TODO: Implement the HALT bug
-	/* if c.isHaltBug {
-		c.isHaltBug = false
-	} else {
-		c.pc++
-	} */
 }
 
 func (c *CPU) read(addr uint16) byte {
@@ -189,56 +93,45 @@ func (c *CPU) fetch() byte {
 	c.pc++
 	return v
 }
-func (c *CPU) fetch16() uint16 {
-	lo := c.fetch()
-	hi := c.fetch()
-	return uint16(hi)<<8 | uint16(lo)
+
+func (c *CPU) nmi() {
+	hi := byte(c.pc >> 8)
+	c.write(0x0100+uint16(c.s), hi)
+	c.s -= 1
+
+	lo := byte(c.pc & 0x00FF)
+	c.write(0x0100+uint16(c.s), lo)
+	c.s -= 1
+
+	p := c.p &^ TheBFlagMask
+	c.write(0x100+uint16(c.s), p)
+	c.s -= 1
+
+	c.p |= InterruptDisableFlagMask
+	nextLo := uint16(c.read(0xFFFA))
+	nextHi := uint16(c.read(0xFFFB))
+	c.pc = nextHi<<8 | nextLo
+
+	c.Bus.PPU.DisableNMI()
 }
 
-func (c *CPU) handleInterrupt() bool {
-	if !c.isIMEEnabled {
-		return false
-	}
+func (c *CPU) irq() {
+	hi := byte(c.pc >> 8)
+	c.write(0x0100+uint16(c.s), hi)
+	c.s -= 1
 
-	curIE := c.read(bus.IE) & 0x1F
-	curIF := c.read(bus.IF) & 0x1F
-	pending := curIE & curIF
-	if pending == 0 {
-		return false
-	}
+	lo := byte(c.pc & 0x00FF)
+	c.write(0x0100+uint16(c.s), lo)
+	c.s -= 1
 
-	for i := 0; i < 5; i++ {
-		if (pending & (1 << i)) != 0 {
-			c.write(bus.IF, curIF & ^(1<<i)) // Clear IF bit before the interrupt.
-			c.isIMEEnabled = false           // Disable IME before the interrupt.
-			c.push(c.pc)
-			c.pc = 0x40 + 0x08*uint16(i)
-			c.cycles += 20
-			return true
-		}
-	}
-	return false
-}
+	p := c.p &^ TheBFlagMask
+	c.write(0x100+uint16(c.s), p)
+	c.s -= 1
 
-func (c *CPU) checkIRQ() {
-	if c.Bus.PPU.HasVBlankInterruptRequested {
-		newIF := c.read(bus.IF) | (1 << 0)
-		c.write(bus.IF, newIF)
-		c.Bus.PPU.HasVBlankInterruptRequested = false
-	}
-	if c.Bus.PPU.HasLCDInterruptRequested {
-		newIF := c.read(bus.IF) | (1 << 1)
-		c.write(bus.IF, newIF)
-		c.Bus.PPU.HasLCDInterruptRequested = false
-	}
-	if c.Bus.Timer.HasIRQ {
-		newIF := c.read(bus.IF) | (1 << 2)
-		c.write(bus.IF, newIF)
-		c.Bus.Timer.HasIRQ = false
-	}
-	if c.Bus.Joypad.HasIRQ {
-		newIF := c.read(bus.IF) | (1 << 4)
-		c.write(bus.IF, newIF)
-		c.Bus.Joypad.HasIRQ = false
-	}
+	c.p |= InterruptDisableFlagMask
+	nextLo := uint16(c.read(0xFFFE))
+	nextHi := uint16(c.read(0xFFFF))
+	c.pc = nextHi<<8 | nextLo
+
+	c.Bus.HasIRQ = false
 }

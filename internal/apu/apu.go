@@ -1,5 +1,6 @@
 package apu
 
+/*
 import (
 	"encoding/binary"
 	"math"
@@ -137,14 +138,14 @@ func (a *APU) generateSample() [8]byte {
 	sr2, sl2 := a.generateSquareChannel(2)
 	sr3, sl3 := a.generateWaveChannel()
 	sr4, sl4 := a.generateNoiseChannel()
-	/*sr1 = 0
-	sl1 = 0
-	sr2 = 0
-	sl2 = 0
-	sr3 = 0
-	sl3 = 0
-	sr4 = 0
-	sl4 = 0 */
+	// sr1 = 0
+	// sl1 = 0
+	// sr2 = 0
+	// sl2 = 0
+	// sr3 = 0
+	// sl3 = 0
+	// sr4 = 0
+	// sl4 = 0
 	sampleR := float32((sr1 + sr2 + sr3 + sr4) / 4.0)
 	sampleL := float32((sl1 + sl2 + sl3 + sl4) / 4.0)
 	binary.LittleEndian.PutUint32(b[0:4], math.Float32bits(sampleL))
@@ -382,3 +383,4 @@ func (a *APU) execEnvelope(chVolume *byte, envelopeRegister byte, sampleCounter 
 		}
 	}
 }
+*/

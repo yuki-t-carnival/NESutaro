@@ -3,15 +3,13 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"gomeboy/config"
-	"gomeboy/internal/apu"
-	"gomeboy/internal/emulator"
 	"image"
 	"image/color"
 	"image/draw"
 	"log"
+	"nesutaro/config"
+	"nesutaro/internal/emulator"
 	"os"
-	"time"
 
 	"path/filepath"
 
@@ -22,6 +20,8 @@ import (
 )
 
 var screenFont *text.GoTextFaceSource
+var srcRect = image.Rect(0, 8, 256, 240-8)
+var dstRect = image.Rect(0, 0, 256, 240-16)
 
 type Game struct {
 	emu                  *emulator.Emulator
@@ -35,26 +35,26 @@ type Game struct {
 	debugLog             []string
 }
 
-func newGame(g *Game, rom, sav []byte) *Game {
+func newGame(g *Game, rom /* , sav */ []byte) *Game {
 	screenFont, _ = text.NewGoTextFaceSource(bytes.NewReader(fonts.PressStart2P_ttf))
 
 	debuggerWidth := 0
 	if g.isDebugScreenEnabled {
-		debuggerWidth = 160
+		debuggerWidth = 256
 	}
-	g.imageRGBA = image.NewRGBA(image.Rect(0, 0, 160+debuggerWidth, 144))
-	g.ebitenImage = ebiten.NewImage(160+debuggerWidth, 144)
+	g.imageRGBA = image.NewRGBA(image.Rect(0, 0, 256+debuggerWidth, 224))
+	g.ebitenImage = ebiten.NewImage(256+debuggerWidth, 224)
 
-	g.emu = emulator.NewEmulator(rom, sav)
+	g.emu = emulator.NewEmulator(rom /* , sav */)
 
 	g.emu.CPU.Bus.Joypad.SetIsGamepadEnabled(g.cfg.Gamepad.IsEnabled)
 	g.emu.CPU.Bus.Joypad.SetIsGamepadBind(g.cfg.Gamepad.Bind)
 
-	g.audioCtx = audio.NewContext(int(apu.SampleRate))
+	/* g.audioCtx = audio.NewContext(int(apu.SampleRate))
 	g.audioPlayer, _ = g.audioCtx.NewPlayerF32(g.emu.CPU.Bus.APU.AudioStream)
 	g.audioPlayer.SetBufferSize(40 * time.Millisecond)
 	g.audioPlayer.SetVolume(0.5)
-	g.audioPlayer.Play()
+	g.audioPlayer.Play() */
 
 	return g
 }
@@ -62,11 +62,11 @@ func newGame(g *Game, rom, sav []byte) *Game {
 // Game.Update() calls Emulator.RunFrame() at 60FPS.
 func (g *Game) Update() error {
 	g.setWindowTitle()
-	if !ebiten.IsFocused() || g.emu.IsPauseMode {
+	/* if !ebiten.IsFocused() || g.emu.IsPauseMode {
 		g.audioPlayer.Pause()
 	} else {
 		g.audioPlayer.Play()
-	}
+	} */
 	if ebiten.IsFocused() {
 		if g.emu.RunFrame() == -1 {
 			return ebiten.Termination
@@ -77,7 +77,7 @@ func (g *Game) Update() error {
 
 func (g *Game) Draw(screen *ebiten.Image) {
 	gameScreen := g.emu.CPU.Bus.PPU.GetGameScreen()
-	draw.Draw(g.imageRGBA, image.Rect(0, 0, 160, 144), gameScreen, gameScreen.Rect.Min, draw.Src)
+	draw.Draw(g.imageRGBA, dstRect, gameScreen, srcRect.Min, draw.Src)
 	g.ebitenImage = ebiten.NewImageFromImage(g.imageRGBA)
 
 	op := &ebiten.DrawImageOptions{}
@@ -89,14 +89,14 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		for i, s := range strs {
 			white := color.RGBA{255, 255, 255, 255}
 			fontSize := 16
-			g.drawText(screen, s, 160*g.pixelScale+fontSize, (i+1)*fontSize, fontSize, white)
+			g.drawText(screen, s, 256*g.pixelScale+fontSize, (i+1)*fontSize, fontSize, white)
 		}
 	}
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
-	screenHeight := 144 * g.pixelScale
-	screenWidth := 160 * g.pixelScale
+	screenHeight := 224 * g.pixelScale
+	screenWidth := 256 * g.pixelScale
 	if g.isDebugScreenEnabled {
 		screenWidth *= 2
 	}
@@ -117,7 +117,7 @@ func main() {
 	g.isDebugScreenEnabled = g.cfg.Video.IsShowDebug
 
 	if len(os.Args) < 2 {
-		fmt.Println("usage: gomeboy <romfile>")
+		fmt.Println("usage: nesutaro <romfile>")
 		return
 	}
 	romPath := os.Args[1]
@@ -126,23 +126,25 @@ func main() {
 		log.Fatal(err)
 	}
 
-	savPath := getSavePathFromROM(romPath)
-	sav, _ := os.ReadFile(savPath)
+	/* savPath := getSavePathFromROM(romPath)
+	sav, _ := os.ReadFile(savPath) */
 
-	windowHeight := 144 * g.pixelScale
-	windowWidth := 160 * g.pixelScale
+	windowHeight := 224 * g.pixelScale
+	windowWidth := 256 * g.pixelScale
 	if g.isDebugScreenEnabled {
 		windowWidth *= 2
 	}
 	ebiten.SetWindowSize(windowWidth, windowHeight)
 
-	err = ebiten.RunGame(newGame(g, rom, sav))
+	err = ebiten.RunGame(newGame(g, rom /* , sav */))
 	if err != nil && err != ebiten.Termination {
 		panic(err)
 	} else {
 		// When the emulator is closed, save ERAM(save) data.
-		savData := g.emu.CPU.Bus.Memory.GetSaveData()
-		os.WriteFile(savPath, savData, 0644)
+		/* savData := g.emu.CPU.Bus.Memory.GetSaveData()
+		os.WriteFile(savPath, savData, 0644) */
+		//g.emu.CPU.Bus.PPU.Bus.VRAMLog()
+		//g.emu.CPU.Bus.PPU.OAMLog()
 	}
 }
 
@@ -163,7 +165,7 @@ func getSavePathFromROM(romPath string) string {
 }
 
 func (g *Game) setWindowTitle() {
-	emuState := ""
+	/* emuState := ""
 	if g.emu.IsPaused {
 		emuState = "(paused)"
 	}
@@ -171,5 +173,6 @@ func (g *Game) setWindowTitle() {
 		ebiten.SetWindowTitle(emuState + "GOmeBoy - " + g.emu.ROMTitle)
 	} else {
 		ebiten.SetWindowTitle(emuState + "GOmeBoy")
-	}
+	} */
+	ebiten.SetWindowTitle("NESutaro")
 }

@@ -1,6 +1,6 @@
 [video]
-scale = 3 # 0~4
-show_debug = false
+scale = 2 # 0~4
+show_debug = true
 
 [gamepad]
 enabled = true
@@ -12,8 +12,8 @@ bind = [
   0,  # B
   10, # SELECT
   11, # START
-  13, # RIGHT
-  15, # LEFT
   12, # UP
-  14  # DOWN
+  14, # DOWN
+  15, # LEFT
+  13  # RIGHT
 ]

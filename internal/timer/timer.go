@@ -1,5 +1,6 @@
 package timer
 
+/*
 type Timer struct {
 	// I/O Registers
 	tma  byte
@@ -115,3 +116,4 @@ func (t *Timer) SetTAC(val byte) {
 	t.tac = 0xF8 | (val & 0x07)
 	t.prevDIV = t.divCounter
 }
+*/

@@ -1,16 +1,18 @@
 package emulator
 
 import (
-	"gomeboy/internal/bus"
-	"gomeboy/internal/cpu"
-	"gomeboy/internal/memory"
-	"strings"
+	"nesutaro/internal/cartridge"
+	"nesutaro/internal/cpu"
+	cbus "nesutaro/internal/cpu/bus"
+	"nesutaro/internal/joypad"
+	"nesutaro/internal/ppu"
+	pbus "nesutaro/internal/ppu/bus"
 
 	"github.com/hajimehoshi/ebiten/v2"
 )
 
 const (
-	CyclesPerFrame float64 = 4194304.0 / 60.0
+	CyclesPerFrame float64 = 1789773 / 60.0
 )
 
 type Emulator struct {
@@ -19,8 +21,6 @@ type Emulator struct {
 
 	IsPaused    bool
 	IsPauseMode bool
-	IsCGB       bool
-	ROMTitle    string
 
 	isKeyP       bool
 	isKeyS       bool
@@ -30,10 +30,13 @@ type Emulator struct {
 	isPrevKeyEsc bool
 }
 
-func NewEmulator(rom, sav []byte) *Emulator {
-	m := memory.NewMemory(rom, sav)
-	b := bus.NewBus(m)
-	c := cpu.NewCPU(b)
+func NewEmulator(rom /* , sav */ []byte) *Emulator {
+	cart := cartridge.NewCartridge(rom /* , sav */)
+	pbus := pbus.NewBus(cart)
+	p := ppu.NewPPU(pbus)
+	j := joypad.NewJoypad()
+	cbus := cbus.NewBus(cart, p, j)
+	c := cpu.NewCPU(cbus)
 	c.Tracer = cpu.NewTracer(c)
 
 	e := &Emulator{
@@ -42,23 +45,11 @@ func NewEmulator(rom, sav []byte) *Emulator {
 		IsPaused:    false,
 	}
 
-	e.ROMTitle = e.GetROMTitle(rom)
-
-	cgbReg := e.CPU.Bus.Read(0x0143)
-	if cgbReg == 0xC0 || cgbReg == 0x80 {
-		e.IsCGB = true
-		e.CPU.Bus.PPU.IsCGB = true
-		e.CPU.Bus.PPU.SetOPRI(0xFE)
-	}
 	return e
 }
 
 func (e *Emulator) RunFrame() int {
-	cpuSpeed := 1
-	if e.CPU.Bus.PPU.IsCGB && e.CPU.Bus.IsWSpeed {
-		cpuSpeed = 2
-	}
-	maxCycles := CyclesPerFrame * float64(cpuSpeed)
+	maxCycles := CyclesPerFrame
 	e.CPU.Bus.Joypad.Update()
 	for e.cpuCycles < maxCycles {
 		e.updateEbitenKeys()
@@ -71,9 +62,9 @@ func (e *Emulator) RunFrame() int {
 		}
 		var c int
 		c = e.CPU.Step()
-		e.CPU.Bus.Timer.Step(c, e.CPU.IsStopped)
-		e.CPU.Bus.PPU.Step(c / cpuSpeed)
-		e.CPU.Bus.APU.Step(c / cpuSpeed)
+		//e.CPU.Bus.Timer.Step(c, e.CPU.IsStopped)
+		e.CPU.Bus.PPU.Step(c)
+		//e.CPU.Bus.APU.Step(c / cpuSpeed)
 		e.CPU.Tracer.Record(e.CPU)
 		e.cpuCycles += float64(c)
 	}
@@ -107,15 +98,6 @@ func (e *Emulator) updateEbitenKeys() {
 	e.isPrevKeyEsc = isEsc
 }
 
-func (e *Emulator) GetROMTitle(rom []byte) string {
-	s := string(rom[0x0134:0x0143])
-	firstNullIdx := strings.IndexByte(s, 0)
-	if firstNullIdx != -1 {
-		s = s[:firstNullIdx]
-	}
-	return s
-}
-
 func (e *Emulator) GetDebugLog() []string {
 	var state string
 	if e.IsPaused {
@@ -128,8 +110,6 @@ func (e *Emulator) GetDebugLog() []string {
 	strs = append(strs, "")
 	strs = append(strs, e.CPU.Tracer.GetCPUInfo()...)
 	strs = append(strs, "")
-	strs = append(strs, e.CPU.Bus.Memory.GetHeaderInfo()...)
-	strs = append(strs, "")
-	strs = append(strs, e.CPU.Bus.APU.GetAPUInfo()...)
+	//strs = append(strs, e.CPU.Bus.APU.GetAPUInfo()...)
 	return strs
 }

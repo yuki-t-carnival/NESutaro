@@ -6,6 +6,8 @@ This is a **NES emulator** written in **Go**, using **Ebiten**.
 It was developed with assistance from **ChatGPT**.
 
 ⚠️ This emulator is developed for learning purposes. So, it's still a work in progress and **contains many bugs**.  
+🔇 Sound is **not supported**.  
+🎮 Only **NROM** mapper is supported.
 
 ![NESutaro thumbnail](thumbnail.png)
 
@@ -49,5 +51,6 @@ Edit the configuration file:
 
 ## Playable / Passed ROMs
 
-- Test
-  - test  
+- Squirrel Domino
+- Argon Dream
+- nestest.nes 

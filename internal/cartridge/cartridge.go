@@ -17,8 +17,12 @@ func NewCartridge(rom /* , sav */ []byte) *Cartridge {
 	switch cart.Header.MapperNum {
 	case 0:
 		cart.Mapper = NewNROM(cart.Header, rom[0x10:])
+	case 2:
+		cart.Mapper = NewUxROM(cart.Header, rom[0x10:])
 	case 3:
 		cart.Mapper = NewCNROM(cart.Header, rom[0x10:])
+	case 4:
+		cart.Mapper = NewMMC3(cart.Header, rom[0x10:])
 	}
 
 	return cart

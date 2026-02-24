@@ -63,11 +63,30 @@ func NewPPU(b *bus.Bus) *PPU {
 func (p *PPU) Step(cpuCycles int) {
 	p.cycles += cpuCycles * 3
 	for p.cycles >= 341 {
+		isBGEnabled := p.ppumask>>3&1 == 1
 		switch {
 		case p.ly < 240: // HBlank: 0 ~ 239
-			isBGEnabled := p.ppumask>>3&1 == 1
 			if isBGEnabled {
-				p.drawBGLine(p.ly)
+				p.drawBGLine()
+
+				// dot 256
+				if p.v&0x7000 != 0x7000 {
+					p.v += 0x1000 // fineY++
+				} else {
+					p.v &^= 0x7000 // fineY = 0
+					coarseY := p.v & 0x03E0 >> 5
+					switch coarseY {
+					case 29:
+						coarseY = 0
+						p.v ^= 0x0800 // tableY reverse
+					case 31:
+						coarseY = 0
+					default:
+						coarseY += 1
+					}
+					p.v = p.v&^0x03E0 + coarseY<<5
+				}
+				p.v = p.v&^0x041F + p.t&0x041F // p.v = p.t (coarseX, tableX only) dot 257
 			}
 			if p.ly > 0 {
 				isSpriteEnabled := p.ppumask>>4&1 == 1
@@ -75,6 +94,7 @@ func (p *PPU) Step(cpuCycles int) {
 					p.drawSpritesLine(p.ly - 1)
 				}
 			}
+
 		case p.ly == 240: // VBlank: 240 ~ 259
 			p.front ^= 1
 			backColor := p.nesPal[p.Bus.Read(0x3F00)]
@@ -89,9 +109,11 @@ func (p *PPU) Step(cpuCycles int) {
 			}
 		case p.ly == 260: // Post(pre) render scanline: 260, 261
 			p.ppustatus &^= VblankFlag
+			p.v = p.v&^0x7BE0 + p.t&0x7BE0 // p.v = p.t (fineY, coarseY, tableY only) dot 280 ~ 304
 		}
 
 		p.cycles -= 341
+
 		p.ly += 1
 		if p.ly >= 262 {
 			p.ly = 0
@@ -100,59 +122,100 @@ func (p *PPU) Step(cpuCycles int) {
 	}
 }
 
-func (p *PPU) drawBGLine(ly int) {
-	currentCoarseY := ((p.getYScroll() + ly) % 480) / 8
-	currentFineY := ((p.getYScroll() + ly) % 480) % 8
+// ============================================ BG =================================================
+
+func (p *PPU) drawBGLine() {
 	prevCoarseX := -1
+	//p.x := int(p.x & 7)
 
 	var tileLine [2]byte
+	startX := int((p.ppumask>>1&1 ^ 1) * 8)
 	for i := 0; i < 256; i++ {
-		currentCoarseX := ((p.getXScroll() + i) % 512) / 8
-		currentFineX := ((p.getXScroll() + i) % 512) % 8
-		if currentCoarseX != prevCoarseX {
-			tileIndex := p.getBGTileIndex(currentCoarseX, currentCoarseY)
-			tileLine = p.getBGTileLine(tileIndex, currentFineY)
+		if i >= startX {
+			currentCoarseX := int(p.v & 0x001F)
+
+			if currentCoarseX != prevCoarseX {
+				nameAddr := uint16(0x2000) + p.v&0x0FFF
+				tileIndex := p.Bus.Read(nameAddr)
+				tileLine = p.getBGTileLine(tileIndex)
+			}
+			raw := p.getTileLinePixel(&tileLine, int(p.x))
+			if raw != 0 {
+				rgba := p.resolveBGPalette(raw)
+				p.setPixel(i, p.ly, rgba)
+			}
+			prevCoarseX = currentCoarseX
 		}
-		raw := p.getTileLinePixel(&tileLine, currentFineX)
-		if raw != 0 {
-			rgba := p.resolveBGPalette(currentCoarseX, currentCoarseY, raw)
-			p.setPixel(i, p.ly, rgba)
+
+		if p.x&7 != 7 {
+			p.x += 1
+		} else {
+			p.x = 0
+			coarseX := p.v & 0x001F
+			if coarseX == 31 {
+				coarseX = 0
+				p.v ^= 0x0400
+			} else {
+				coarseX += 1
+			}
+			p.v = p.v&^0x001F + coarseX
 		}
-		prevCoarseX = currentCoarseX
 	}
 }
+func (p *PPU) getBGTileLine(tileIndex byte) [2]byte {
+	base := uint16(0x0000)
+	if p.ppuctrl>>4&1 == 1 {
+		base = 0x1000
+	}
+	fineY := p.v & 0x7000 >> 12
+	var data [2]byte
+	data[0] = p.Bus.Read(base + uint16(tileIndex)<<4 + (0 << 3) + fineY)
+	data[1] = p.Bus.Read(base + uint16(tileIndex)<<4 + (1 << 3) + fineY)
+	return data
+}
+func (p *PPU) resolveBGPalette(raw int) color.RGBA {
+	blockX := p.v & 0x001C >> 2 // = coarseX / 4
+	blockY := p.v & 0x0380 >> 7 // = coarseY / 4
+	attrAddr := uint16(0x23C0) + p.v&0x0C00 + blockY<<3 + blockX
+	attr := p.Bus.Read(attrAddr)
+
+	shift := p.v&0x0040>>4 + p.v&0x0002
+
+	palVal := uint16(attr >> shift & 3)
+	colorVal := p.Bus.Read(0x3F00 + palVal<<2 + uint16(raw))
+	return p.nesPal[colorVal&0x3F]
+}
+
+// ========================================= Sprites ===============================================
 
 func (p *PPU) drawSpritesLine(ly int) {
-	size := 8
-	is16Size := p.ppuctrl>>5&1 == 1
-	if is16Size {
-		size = 16
-	}
+	tileH := 8 * int(1+p.ppuctrl>>5&1)
 	var tileLine [2]byte
+	startX := int(p.ppumask>>2&1^1) * 8
 	for i := 63; i >= 0; i-- {
-		posY := int(p.oam[i*4+0])
-		tileIdx := p.oam[i*4+1]
-		attr := int(p.oam[i*4+2])
-		posX := int(p.oam[i*4+3])
+		posY := int(p.oam[i<<2+0])
+		tileIdx := p.oam[i<<2+1]
+		attr := int(p.oam[i<<2+2])
+		posX := int(p.oam[i<<2+3])
 
 		isXFlip := attr>>6&1 == 1
 		isYFlip := attr>>7&1 == 1
 
-		if posY <= ly && ly < posY+size {
+		if posY <= ly && ly < posY+tileH {
 			fineY := ly - posY
 			tileY := fineY
 			if isYFlip {
-				tileY = size - 1 - tileY
+				tileY = tileH - 1 - tileY
 			}
 			tileLine = p.getSpriteTileLine(tileIdx, tileY)
 			for j := 0; j < 8; j++ {
-				if posX+j < 256 {
+				if startX <= posX+j && posX+j < 256 {
 					tileX := j
 					if isXFlip {
 						tileX = 7 - tileX
 					}
 					raw := p.getTileLinePixel(&tileLine, tileX)
-					palVal := attr & 0x03
+					palVal := attr & 3
 					if raw != 0 {
 						rgba := p.resolveSpritesPalette(palVal, raw)
 						p.setPixel(posX+j, ly+1, rgba)
@@ -163,54 +226,29 @@ func (p *PPU) drawSpritesLine(ly int) {
 		}
 	}
 }
+func (p *PPU) getSpriteTileLine(tileIndex byte, fineY int) [2]byte {
+	idx := uint16(tileIndex)
+	var start uint16
 
-func (p *PPU) resolveSpritesPalette(palVal int, raw int) color.RGBA {
-	colorVal := p.Bus.Read(0x3F10 + uint16(palVal)*4 + uint16(raw))
-	return p.nesPal[colorVal&0x3F]
-}
-
-func (p *PPU) getBGTileIndex(coarseX, coarseY int) byte {
-	mapCoarseX := coarseX % 32
-	mapCoarseY := coarseY % 30
-	nameStart := 0x2000
-	nameStart += 0x0400 * (coarseX / 32)
-	nameStart += 0x0800 * (coarseY / 30)
-	nameAddr := nameStart + mapCoarseY*32 + mapCoarseX
-	index := p.Bus.Read(uint16(nameAddr))
-	return index
-}
-
-func (p *PPU) resolveBGPalette(coarseX, coarseY, raw int) color.RGBA {
-	mapBlockX := coarseX % 32 / 4
-	mapBlockY := coarseY % 30 / 4
-	modX := coarseX % 32 % 4
-	modY := coarseY % 30 % 4
-	base := 0x23C0
-	base += 0x0400 * (coarseX / 32)
-	base += 0x0800 * (coarseY / 30)
-
-	attrAddr := base + mapBlockY*8 + mapBlockX
-
-	shift := 2 * (modX / 2)
-	shift += 4 * (modY / 2)
-
-	palVal := uint16(p.Bus.Read(uint16(attrAddr)) >> shift & 0x03)
-
-	colorVal := p.Bus.Read(0x3F00 + palVal*4 + uint16(raw))
-
-	return p.nesPal[colorVal&0x3F]
-}
-
-func (p *PPU) getBGTileLine(tileIndex byte, fineY int) [2]byte {
-	var data [2]byte
-	base := uint16(0x0000)
-	if p.ppuctrl>>4&1 == 1 {
-		base = 0x1000
+	tileH := 8 * int(1+p.ppuctrl>>5&1)
+	if tileH == 16 {
+		start = idx&1<<12 + idx&0xFE<<4
+	} else {
+		spriteAddrNum := uint16(p.ppuctrl >> 3 & 1)
+		start = spriteAddrNum<<12 + idx<<4
 	}
-	data[0] = p.Bus.Read(base + uint16(tileIndex)*16 + uint16(fineY))
-	data[1] = p.Bus.Read(base + uint16(tileIndex)*16 + 8 + uint16(fineY))
+
+	var data [2]byte
+	data[0] = p.Bus.Read(start + (0 << 3) + uint16(fineY))
+	data[1] = p.Bus.Read(start + (1 << 3) + uint16(fineY))
 	return data
 }
+func (p *PPU) resolveSpritesPalette(palVal int, raw int) color.RGBA {
+	colorVal := p.Bus.Read(0x3F10 + uint16(palVal)<<2 + uint16(raw))
+	return p.nesPal[colorVal&0x3F]
+}
+
+// ======================================== BG/Sprites =============================================
 
 func (p *PPU) getTileLinePixel(tileLine *[2]byte, fineX int) int {
 	shift := 7 - fineX
@@ -219,41 +257,8 @@ func (p *PPU) getTileLinePixel(tileLine *[2]byte, fineX int) int {
 	px := int(hi<<1 | lo)
 	return px & 0x03
 }
-
-func (p *PPU) getSpriteTileLine(tileIndex byte, fineY int) [2]byte {
-	idx := uint16(tileIndex)
-	var start uint16
-
-	is16Size := p.ppuctrl>>5&1 == 1
-	if is16Size {
-		start = idx&1*0x1000 + idx&0xFE*0x10
-	} else {
-		spriteAddrNum := uint16(p.ppuctrl >> 3 & 1)
-		start = spriteAddrNum*0x1000 + idx*0x10
-	}
-
-	var data [2]byte
-	data[0] = p.Bus.Read(start + uint16(fineY))
-	data[1] = p.Bus.Read(start + 8 + uint16(fineY))
-	return data
-}
-
 func (p *PPU) setPixel(x, y int, rgba color.RGBA) {
 	p.screen[p.front^1].SetRGBA(x, y, rgba)
-}
-
-func (p *PPU) getXScroll() int {
-	xBit8 := int(p.t) >> 10 & 1
-	coarseX := int(p.t & 0x001F)
-	fineX := int(p.x & 0x07)
-	return xBit8<<8 | coarseX<<3 | fineX
-}
-
-func (p *PPU) getYScroll() int {
-	yBit8 := int(p.t) >> 11 & 1
-	coarseY := int(p.t & 0x03E0 >> 5)
-	fineY := int(p.t & 0x7000 >> 12)
-	return yBit8<<8 | coarseY<<3 | fineY
 }
 
 // Get Viewport pixels converted from colorIndex to RGBA
@@ -269,7 +274,7 @@ func (p *PPU) WriteOAM(addr uint16, val byte) {
 }
 
 func (p *PPU) WritePPUCTRL(val byte) {
-	p.ppuctrl = val & 0xFC
+	p.ppuctrl = val
 	p.t = p.t&0x73FF | uint16(val)&0x03<<10
 }
 
@@ -280,7 +285,7 @@ func (p *PPU) WritePPUMASK(val byte) {
 func (p *PPU) ReadPPUSTATUS() byte {
 	p.w = false
 	val := p.ppustatus
-	p.ppustatus &^= VblankFlag
+	//p.ppustatus &^= VblankFlag
 	return val
 }
 
@@ -300,13 +305,13 @@ func (p *PPU) WriteOAMDATA(val byte) {
 func (p *PPU) WritePPUSCROLL(val byte) {
 	isFirstWriting := !p.w
 	if isFirstWriting {
-		p.x = val & 0x07
 		coarseX := uint16(val >> 3)
-		p.t = p.t&0x7FE0 | coarseX
+		p.t = p.t&^0x001F + coarseX
+		p.x = val & 0x07
 	} else {
-		fineY := uint16(val & 0x07)
-		coarseY := uint16(val >> 3)
-		p.t = p.t&0x0C1F | fineY<<12 | coarseY<<5
+		fineY := uint16(val&0x07) << 12
+		coarseY := uint16(val&0xF8) << 2
+		p.t = fineY + p.t&^0x73E0 + coarseY
 	}
 	p.w = !p.w
 }
@@ -315,9 +320,9 @@ func (p *PPU) WritePPUADDR(val byte) {
 	isFirstWriting := !p.w
 	if isFirstWriting {
 		// Bit 14 is forced 0 when writting the PPUADDR high byte.
-		p.t = uint16(val&0x3F)<<8 | p.t&0x00FF
+		p.t = uint16(val&0x3F)<<8 + p.t&^0xFF00
 	} else {
-		p.t = p.t&0x7F00 | uint16(val)
+		p.t = p.t&^0x00FF + uint16(val)
 		p.v = p.t
 	}
 	p.w = !p.w

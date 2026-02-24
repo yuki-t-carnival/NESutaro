@@ -51,6 +51,4 @@ Edit the configuration file:
 
 ## Playable / Passed ROMs
 
-- Squirrel Domino
-- Argon Dream
 - nestest.nes 

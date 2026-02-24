@@ -48,11 +48,11 @@ func (c *CPU) Step() int {
 	c.cycles = 0
 
 	//prevPC := c.pc
-	if c.Bus.HasIRQ && c.p&InterruptDisableFlagMask == 0 {
-		c.irq()
-	}
 	if c.Bus.PPU.HasNMI() {
 		c.nmi()
+	}
+	if c.Bus.HasIRQ && c.p&InterruptDisableFlagMask == 0 {
+		c.irq()
 	}
 	if c.isIFlagToggleDelayed {
 		c.p |= InterruptDisableFlagMask
@@ -113,6 +113,7 @@ func (c *CPU) nmi() {
 	c.pc = nextHi<<8 | nextLo
 
 	c.Bus.PPU.DisableNMI()
+	c.Bus.HasIRQ = false
 }
 
 func (c *CPU) irq() {

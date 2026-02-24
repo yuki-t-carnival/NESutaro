@@ -12,8 +12,10 @@ type CNROM struct {
 func NewCNROM(h *INESHeader, rom []byte) *CNROM {
 	cnrom := &CNROM{}
 
-	copy(cnrom.prgROM[:], rom[:0x4000*h.TotalPRGROMUnits])
-	copy(cnrom.chrROM[:], rom[0x4000*h.TotalPRGROMUnits:])
+	chrStart := 0x4000 * h.TotalPRGROMUnits
+	chrEnd := chrStart + 0x2000*h.TotalCHRROMUnits
+	copy(cnrom.prgROM[:], rom[:chrStart])
+	copy(cnrom.chrROM[:], rom[chrStart:chrEnd])
 
 	return cnrom
 }

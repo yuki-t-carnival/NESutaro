@@ -7,7 +7,7 @@ It was developed with assistance from **ChatGPT**.
 
 ⚠️ This emulator is developed for learning purposes. So, it's still a work in progress and **contains many bugs**.  
 🔇 Sound is **not supported**.  
-🎮 Only **NROM** mapper is supported.
+🎮 Only **NROM** mapper is partially supported.
 
 ![NESutaro thumbnail](thumbnail.png)
 
